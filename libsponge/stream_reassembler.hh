@@ -18,11 +18,10 @@ class StreamReassembler {
         size_t _end;
     };
 
-    ByteStream _output;     //!< The reassembled in-order byte stream
-    size_t _capacity;       //!< The maximum number of bytes
-    size_t _cur_index{};    //!< The tail of byte stream
-    // size_t _unassembled{};  //!< The # of unassembled bytes.
-    bool _eof{};            //!< If has received eof signal
+    ByteStream _output;   //!< The reassembled in-order byte stream
+    size_t _capacity;     //!< The maximum number of bytes
+    size_t _cur_index{};  //!< The tail of byte stream
+    bool _eof{};          //!< If has received eof signal
 
     std::list<_list_node> _list{};
 
@@ -57,6 +56,8 @@ class StreamReassembler {
     //! \brief Is the internal state empty (other than the output stream)?
     //! \returns `true` if no substrings are waiting to be assembled
     bool empty() const;
+
+    size_t cur_index() const { return _cur_index; }
 };
 
 #endif  // SPONGE_LIBSPONGE_STREAM_REASSEMBLER_HH
