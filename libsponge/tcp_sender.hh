@@ -6,8 +6,40 @@
 #include "tcp_segment.hh"
 #include "wrapping_integers.hh"
 
+#include <cstddef>
+#include <cstdint>
 #include <functional>
+#include <list>
 #include <queue>
+
+class RetransmissionTimer {
+  private:
+    uint64_t _ddl{};
+    uint64_t _cur{};
+    bool _is_start{};
+
+  public:
+    bool expired() { return _is_start ? _cur >= _ddl : false; }
+
+    void start(uint64_t ddl) {
+        if (_is_start)
+            return;
+        _ddl = ddl;
+        _cur = 0;
+        _is_start = true;
+    }
+
+    void stop() {
+        _is_start = false;
+        _cur = _ddl = 0;
+    }
+
+    void tick(uint64_t time) {
+        if (!_is_start)
+            return;
+        _cur += time;
+    }
+};
 
 //! \brief The "sender" part of a TCP implementation.
 
@@ -31,6 +63,33 @@ class TCPSender {
 
     //! the (absolute) sequence number for the next byte to be sent
     uint64_t _next_seqno{0};
+
+    //! receiver's window size
+    uint64_t _window_size{1};
+
+    //! count of bytes sent but not acknowledged yet
+    uint64_t _bytes_in_flight{0};
+
+    //! oldest unacknowledged sequence number
+    uint64_t _una_seqno{0};
+
+    //! list of all outstanding segments
+    std::list<TCPSegment> _outstanding_segments{};
+
+    //! retransmission timer
+    RetransmissionTimer _timer{};
+
+    //! current time updated by tick()
+    uint64_t _cur_time{};
+
+    //! current retransmission timeout
+    uint64_t _cur_rto;
+
+    //! consecutive retransmission count
+    unsigned int _consecutive_retrans_times{};
+
+    //! if FIN has been sent
+    bool _is_transmission_ended{};
 
   public:
     //! Initialize a TCPSender
