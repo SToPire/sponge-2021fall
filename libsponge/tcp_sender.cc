@@ -95,7 +95,8 @@ void TCPSender::ack_received(const WrappingInt32 ackno, const uint16_t window_si
         if (ackno_abs >= unwrap(seg->header().seqno, _isn, _next_seqno) + seg->length_in_sequence_space()) {
             _bytes_in_flight -= seg->length_in_sequence_space();
             seg = _outstanding_segments.erase(seg);
-            // XXX: We do not support partially acknowledgement yet.
+            /* XXX: We do not support partially acknowledgement yet, which is documented in lab manual. If you do so,
+             * you may not pass "Repeated ACKs and outdated ACKs are harmless" test in send_extra.cc.*/
         } else {
             ++seg;
         }

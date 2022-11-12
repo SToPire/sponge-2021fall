@@ -46,3 +46,26 @@ Lab2首先需要实现一个工具类，将TCP序列号（32位，可能wrap aro
 在`TCPReceiver`类中需要实现3个函数。注意SYN和FIN位各自需要占据一个序列号即可。按照讲义中（第5页）的提示，`unwrap`时使用last reassembled byte作为checkpoint（约等于ackno，它们只相差1）。
 
 疑惑：讲义中提示用`TCPSegment::length_in_sequence_space()`（可能是维护ackno？），但看起来维护ackno最方便的方法是直接用下层`StreamReassembler`的当前指针，注意考虑SYN和FIN的额外偏移即可。
+
+---
+
+### Lab3
+
+本实验实现TCP的sender部分。TCPSender需要提供4个接口：
+
+| 接口                          | 功能                                                         |
+| ----------------------------- | ------------------------------------------------------------ |
+| `fill_window()`               | 从输入字节流中尽可能多的读取数据并发送，直至填满窗口或字节流为空 |
+| `ack_received(ackno, window)` | 更新ackno和窗口大小                                          |
+| `tick(time)`                  | 更新当前时间                                                 |
+| `send_empty_segment()`        | 发送一个长度为0的数据段                                      |
+
+手册里已经很清楚地描述了这些接口具体的行为，因此这个实验大部分是面向用例编程。尽管如此，用例覆盖的也不甚全面，很可能当前的一些实现并不符合设计目的。
+
+一些注意点：
+
+1. 实验手册规定的行为并不和RFC6298完全符合。在这个实验中，重传计时器的RTO的初值是给定的（而非动态测定）。RTO指数后退的逻辑存在，但是实验手册要求在窗口大小为0时不进行指数后退，这个行为暂时没有在RFC标准中找到依据。
+2. 为了实现简单，本实验不要求待确认的数据段被部分确认，即只当$ackno >= segno + seg.length$才认为整个数据段被确认接收。不存在部分确认会导致`bytes_in_flight()` 超过窗口大小，需要考虑特判这种情况（或许后续实验还要修改）。
+3. `MAX_PAYLOAD_SIZE`只是限制了载荷的大小，并不是序列号空间的大小，不会影响SYN和FIN位。
+4. 发送空数据段的方式：正常设置序列号（即设为ackno），不设置SYN和FIN位，载荷为空。
+5. ackno必须满足$SND.UNA < SEG.ACK <= SND.NXT$，其中UNA是oldest unacknowledged sequence number，NXT是next sequence number to be sent。不满足条件的ackno应该被直接丢弃，不能影响其他状态。
