@@ -22,7 +22,12 @@ void TCPReceiver::segment_received(const TCPSegment &seg) {
     }
 
     if (_isn.has_value()) {
-        _reassembler.push_substring(seg.payload().copy(), unwrap(data_start, _isn.value(), _reassembler.cur_index()) - 1, seg.header().fin);
+        /* Invalid seqno */
+        if (_isn.value() == data_start)
+            return;
+
+        _reassembler.push_substring(
+            seg.payload().copy(), unwrap(data_start, _isn.value(), _reassembler.cur_index()) - 1, seg.header().fin);
     }
 }
 

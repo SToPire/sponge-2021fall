@@ -4,7 +4,7 @@
 #include "tcp_state.hh"
 
 #include <iostream>
-#include <stdexcept>
+#include <limits>
 
 // Dummy implementation of a TCP connection
 
@@ -16,7 +16,7 @@ void DUMMY_CODE(Targs &&.../* unused */) {}
 
 using namespace std;
 
-size_t TCPConnection::remaining_outbound_capacity() const { return {}; }
+size_t TCPConnection::remaining_outbound_capacity() const { return _sender.stream_in().remaining_capacity(); }
 
 size_t TCPConnection::bytes_in_flight() const { return _sender.bytes_in_flight(); }
 
@@ -24,8 +24,26 @@ size_t TCPConnection::unassembled_bytes() const { return _receiver.unassembled_b
 
 size_t TCPConnection::time_since_last_segment_received() const { return _time_since_last_seg_received; }
 
-void TCPConnection::segment_received(const TCPSegment &seg) {
+void TCPConnection::_send_all_outbounding_segments() {
     TCPSegment seg_out;
+    while (!_sender.segments_out().empty()) {
+        seg_out = _sender.segments_out().front();
+        _sender.segments_out().pop();
+        if (_receiver.ackno().has_value()) {
+            seg_out.header().ack = true;
+            seg_out.header().ackno = _receiver.ackno().value();
+        }
+
+        /* window size should not overflow `TCPSegement::header().win`. */
+        seg_out.header().win =
+            min(_receiver.window_size(), static_cast<uint64_t>(std::numeric_limits<uint16_t>::max()));
+
+        _segments_out.push(seg_out);
+    }
+}
+
+void TCPConnection::segment_received(const TCPSegment &seg) {
+    // TCPSegment seg_out;
 
     _time_since_last_seg_received = 0;
 
@@ -35,57 +53,66 @@ void TCPConnection::segment_received(const TCPSegment &seg) {
         return;
     }
 
-    if (state() == TCPState(TCPState::State::CLOSING) and seg.header().ack) {
-        /* CLOSING -> TIME-WAIT */
+    /* Drop any segment except SYN in LISTEN state. */
+    if (state() == TCPState(TCPState::State::LISTEN) and !seg.header().syn)
+        return;
+
+    // if (state() == TCPState(TCPState::State::CLOSING) and seg.header().ack) {
+    //     /* CLOSING -> TIME-WAIT */
+    //     _sender.ack_received(seg.header().ackno, seg.header().win);
+    //     /* This ack contains no data, as input stream has been closed. */
+    //     /* So need not call `_receiver.segment_received()`, and need not send a ack. */
+    // } else if (state() == TCPState(TCPState::State::FIN_WAIT_1) and seg.header().ack) {
+    //     _sender.ack_received(seg.header().ackno, seg.header().win);
+    //     _receiver.segment_received(seg);
+
+    //     // /* If we have just received a FIN, we have to acknowledge it. */
+    //     // if (state() == TCPState(TCPState::State::CLOSING) or state() == TCPState(TCPState::State::TIME_WAIT) or
+    //     //     /* The segment just acknowledges previous data rather than FIN. */
+    //     //     /* In this case, the segment may still contain inbound data, so we need to acknowledge it. */
+    //     //     state() == TCPState(TCPState::State::FIN_WAIT_1)) {
+    //     if (seg.length_in_sequence_space()) {
+    //         /* Need not call fill_window() as the output stream has been closed. */
+    //         _sender.send_empty_segment();
+
+    //         seg_out = _sender.segments_out().front();
+    //         _sender.segments_out().pop();
+    //         if (_receiver.ackno().has_value()) {
+    //             seg_out.header().ack = true;
+    //             seg_out.header().ackno = _receiver.ackno().value();
+    //         }
+    //         _segments_out.push(seg_out);
+    //     }
+    // } else {
+    _receiver.segment_received(seg);
+
+    if (seg.header().ack) {
         _sender.ack_received(seg.header().ackno, seg.header().win);
-        /* This ack contains no data, as input stream has been closed. */
-        /* So need not call `_receiver.segment_received()`, and need not send a ack. */
-    } else if (state() == TCPState(TCPState::State::FIN_WAIT_1) and seg.header().ack) {
-        _sender.ack_received(seg.header().ackno, seg.header().win);
-        _receiver.segment_received(seg);
-
-        // /* If we have just received a FIN, we have to acknowledge it. */
-        // if (state() == TCPState(TCPState::State::CLOSING) or state() == TCPState(TCPState::State::TIME_WAIT) or
-        //     /* The segment just acknowledges previous data rather than FIN. */
-        //     /* In this case, the segment may still contain inbound data, so we need to acknowledge it. */
-        //     state() == TCPState(TCPState::State::FIN_WAIT_1)) {
-        if (seg.length_in_sequence_space()) {
-            /* Need not call fill_window() as the output stream has been closed. */
-            _sender.send_empty_segment();
-
-            seg_out = _sender.segments_out().front();
-            _sender.segments_out().pop();
-            if (_receiver.ackno().has_value()) {
-                seg_out.header().ack = true;
-                seg_out.header().ackno = _receiver.ackno().value();
-            }
-            _segments_out.push(seg_out);
-        }
-    } else {
-        _receiver.segment_received(seg);
-
-        if (seg.header().ack) {
-            _sender.ack_received(seg.header().ackno, seg.header().win);
-        }
-
-        _sender.fill_window();
-        if (_sender.segments_out().empty()) {
-            _sender.send_empty_segment();
-        }
-
-        seg_out = _sender.segments_out().front();
-        _sender.segments_out().pop();
-        if (_receiver.ackno().has_value()) {
-            seg_out.header().ack = true;
-            seg_out.header().ackno = _receiver.ackno().value();
-        }
-
-        _segments_out.push(seg_out);
     }
+
+    /* We are assure that inbound bytestream ended before outbound bytestream reaches eof, no linger.*/
+    if (_receiver.stream_out().input_ended() and !_sender.stream_in().eof())
+        _linger_after_streams_finish = false;
+
+    _sender.fill_window();
+    if (_sender.segments_out().empty()) {
+        if (seg.length_in_sequence_space())
+            _sender.send_empty_segment();
+        else
+            return;
+    }
+
+    _send_all_outbounding_segments();
 }
 
 bool TCPConnection::active() const {
+    if (_sender.stream_in().error() or _receiver.stream_out().error())
+        return false;
+
     if (_linger_after_streams_finish and _time_since_last_seg_received < 10 * _cfg.rt_timeout)
+        return true;
+
+    if (_sender.bytes_in_flight())
         return true;
 
     if (_sender.stream_in().input_ended() and _receiver.stream_out().input_ended())
@@ -95,20 +122,39 @@ bool TCPConnection::active() const {
 }
 
 size_t TCPConnection::write(const string &data) {
-    DUMMY_CODE(data);
-    return {};
+    size_t ret = _sender.stream_in().write(data);
+
+    _sender.fill_window();
+
+    _send_all_outbounding_segments();
+
+    return ret;
 }
 
 //! \param[in] ms_since_last_tick number of milliseconds since the last call to this method
 void TCPConnection::tick(const size_t ms_since_last_tick) {
+    TCPSegment seg_out;
     _time_since_last_seg_received += ms_since_last_tick;
     _sender.tick(ms_since_last_tick);
 
     /* Sender may need to retransmit a packet. */
-    if (!_sender.segments_out().empty()) {
-        _segments_out.push(_sender.segments_out().front());
+    /* Retry too many times, reset the connection. */
+    if (_sender.consecutive_retransmissions() > _cfg.MAX_RETX_ATTEMPTS) {
+        /* send RST to peer */
+        _sender.send_empty_segment();        
+        seg_out = _sender.segments_out().front();
         _sender.segments_out().pop();
+
+        seg_out.header().rst = true;
+        _segments_out.push(seg_out);
+
+        /* set TCP state to RESET */
+        _sender.stream_in().set_error();
+        _receiver.stream_out().set_error();
+        return;
     }
+
+    _send_all_outbounding_segments();
 }
 
 void TCPConnection::end_input_stream() {
@@ -144,7 +190,13 @@ TCPConnection::~TCPConnection() {
         if (active()) {
             cerr << "Warning: Unclean shutdown of TCPConnection\n";
 
-            // Your code here: need to send a RST segment to the peer
+            // We need to send a RST segment to the peer.
+            _sender.send_empty_segment();
+            TCPSegment seg = _sender.segments_out().front();
+            _sender.segments_out().pop();
+
+            seg.header().rst = true;
+            _segments_out.push(seg);
         }
     } catch (const exception &e) {
         std::cerr << "Exception destructing TCP FSM: " << e.what() << std::endl;
