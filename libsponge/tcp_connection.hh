@@ -24,9 +24,11 @@ class TCPConnection {
 
     uint64_t _time_since_last_seg_received{};
 
-    /* fetch all sender's outbounding segments, add receiver-side fields (win, ack), then send them out */
+    //! fetch all sender's outbounding segments, add receiver-side fields (win, ack), then send them out
     void _send_all_outbounding_segments();
 
+    //! print segment in transmission in debug mode
+    void _debug_print_txrx_info(TCPSegment seg, bool is_sent);
   public:
     //! \name "Input" interface for the writer
     //!@{

@@ -5,6 +5,7 @@
 
 #include <iostream>
 #include <limits>
+#include <thread>
 
 // Dummy implementation of a TCP connection
 
@@ -24,6 +25,18 @@ size_t TCPConnection::unassembled_bytes() const { return _receiver.unassembled_b
 
 size_t TCPConnection::time_since_last_segment_received() const { return _time_since_last_seg_received; }
 
+void TCPConnection::_debug_print_txrx_info(TCPSegment seg, bool is_sent) {
+#ifdef DEBUG_ENABLED
+    cerr << endl
+         << "seg " << (is_sent ? "send" : "recv") << ": SYN=" << seg.header().syn << " seqno=" << seg.header().seqno
+         << " ACK=" << seg.header().ack << " ackno=" << seg.header().ackno << " LEN=" << seg.length_in_sequence_space()
+         << " win=" << seg.header().win << " RST=" << seg.header().rst << " FIN=" << seg.header().fin
+         << " tid=" << std::this_thread::get_id() << endl;
+#else
+    DUMMY_CODE(seg, is_sent);
+#endif
+}
+
 void TCPConnection::_send_all_outbounding_segments() {
     TCPSegment seg_out;
     while (!_sender.segments_out().empty()) {
@@ -39,12 +52,13 @@ void TCPConnection::_send_all_outbounding_segments() {
             min(_receiver.window_size(), static_cast<uint64_t>(std::numeric_limits<uint16_t>::max()));
 
         _segments_out.push(seg_out);
+        _debug_print_txrx_info(seg_out, true);
     }
 }
 
 void TCPConnection::segment_received(const TCPSegment &seg) {
     // TCPSegment seg_out;
-
+    _debug_print_txrx_info(seg, false);
     _time_since_last_seg_received = 0;
 
     if (seg.header().rst) {
@@ -141,12 +155,13 @@ void TCPConnection::tick(const size_t ms_since_last_tick) {
     /* Retry too many times, reset the connection. */
     if (_sender.consecutive_retransmissions() > _cfg.MAX_RETX_ATTEMPTS) {
         /* send RST to peer */
-        _sender.send_empty_segment();        
+        _sender.send_empty_segment();
         seg_out = _sender.segments_out().front();
         _sender.segments_out().pop();
 
         seg_out.header().rst = true;
         _segments_out.push(seg_out);
+        _debug_print_txrx_info(seg_out, true);
 
         /* set TCP state to RESET */
         _sender.stream_in().set_error();
@@ -163,8 +178,9 @@ void TCPConnection::end_input_stream() {
     _sender.stream_in().end_input();
 
     _sender.fill_window();
+    /* This may happen, as upper layer may call TCPConnection::end_input_stream() even after FIN has been sent. */
     if (_sender.segments_out().empty() || !_sender.segments_out().front().header().fin)
-        throw runtime_error("Expect to have a FIN sigment, which is not true.");
+        return;
 
     seg_out = _sender.segments_out().front();
     _sender.segments_out().pop();
@@ -175,13 +191,16 @@ void TCPConnection::end_input_stream() {
     }
 
     _segments_out.push(seg_out);
+    _debug_print_txrx_info(seg_out, true);
 }
 
 void TCPConnection::connect() {
     _sender.fill_window();
     if (!_sender.segments_out().empty()) {
-        _segments_out.push(_sender.segments_out().front());
+        TCPSegment seg = _sender.segments_out().front();
         _sender.segments_out().pop();
+        _segments_out.push(seg);
+        _debug_print_txrx_info(seg, true);
     }
 }
 
@@ -197,6 +216,7 @@ TCPConnection::~TCPConnection() {
 
             seg.header().rst = true;
             _segments_out.push(seg);
+            _debug_print_txrx_info(seg, true);
         }
     } catch (const exception &e) {
         std::cerr << "Exception destructing TCP FSM: " << e.what() << std::endl;
