@@ -27,8 +27,8 @@ class TCPConnection {
     //! fetch all sender's outbounding segments, add receiver-side fields (win, ack), then send them out
     void _send_all_outbounding_segments();
 
-    //! print segment in transmission in debug mode
-    void _debug_print_txrx_info(TCPSegment seg, bool is_sent);
+    //! send a RST segment
+    void _send_rst_segmenet();
   public:
     //! \name "Input" interface for the writer
     //!@{

@@ -61,8 +61,8 @@ void TCPSender::fill_window() {
         _bytes_in_flight += read_size;
         _next_seqno += read_size;
 
-        // It's a FIN segment.
-        if (_stream.input_ended() && actual_window_size - _bytes_in_flight) {
+        // Set FIN flag when we are assure that outstream was closed and all data has been sent.
+        if (_stream.input_ended() and _stream.eof() and actual_window_size - _bytes_in_flight) {
             seg.header().fin = true;
             ++_next_seqno;
             ++_bytes_in_flight;
