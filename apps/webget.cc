@@ -18,7 +18,7 @@ void get_URL(const string &host, const string &path) {
     // the "eof" (end of file).
 
     Address addr = Address(host, "http");
-    CS144TCPSocket skt = CS144TCPSocket();
+    FullStackSocket skt = FullStackSocket();
     vector<string> reqs = {"GET " + path + " HTTP/1.1\r\n", "Host: " + host + "\r\n", "Connection: close\r\n", "\r\n"};
 
     skt.connect(addr);
