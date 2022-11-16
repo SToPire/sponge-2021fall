@@ -51,7 +51,7 @@ Lab2首先需要实现一个工具类，将TCP序列号（32位，可能wrap aro
 
 ### Lab3
 
-本实验实现TCP的sender部分。TCPSender需要提供4个接口：
+本实验实现TCP的sender部分。`TCPSender`需要提供4个接口：
 
 | 接口                          | 功能                                                         |
 | ----------------------------- | ------------------------------------------------------------ |
@@ -69,3 +69,60 @@ Lab2首先需要实现一个工具类，将TCP序列号（32位，可能wrap aro
 3. `MAX_PAYLOAD_SIZE`只是限制了载荷的大小，并不是序列号空间的大小，不会影响SYN和FIN位。
 4. 发送空数据段的方式：正常设置序列号（即设为ackno），不设置SYN和FIN位，载荷为空。
 5. ackno必须满足$SND.UNA < SEG.ACK <= SND.NXT$，其中UNA是oldest unacknowledged sequence number，NXT是next sequence number to be sent。不满足条件的ackno应该被直接丢弃，不能影响其他状态。
+
+---
+
+### Lab4
+
+#### 实验要求
+
+本实验实现完整的`TCPConnection`，TCP通信的每一端都由Lab2/3中实现的`TCPReceiver`和`TCPSender`组成。按照实验要求，`TCPConnection`需要提供以下接口：
+
+| 接口                    | 功能                            |
+| ----------------------- | ------------------------------- |
+| `connect()`             | 发起一条TCP链接                 |
+| `write(data)`           | 通过sender发送数据              |
+| `end_input_stream()`    | 结束数据发送（仍然可以接收）    |
+| `segment_received(seg)` | 通过receiver接收一个数据段      |
+| `active()`              | 判断TCP连接是否仍然处于活跃状态 |
+
+#### 实现
+
+Lab4的实现主要就是调用前面实验中实现的接口：例如`segment_received()`接分别调用receiver的`segment_received()`和sender的`ack_received()`方法，询问sender是否有数据需要发送，如果没有则生成空数据段准备发送。向待发送的数据段中填入receiver一侧的ackno和win字段，然后发送。
+
+一些注意点：
+
+1. 我一开始以为本部分需要根据TCP状态机设计所有的状态转移，事实上没有必要这么做。只要各部分接口的逻辑正确，TCP实现就会正确表现出状态机的行为。只有一些特例需要判断：如`LISTEN`下，TCP连接应该丢弃所有不含有SYN的数据段。
+
+2. TCP连接在TIME-WAIT下需要继续存活一段时间，体现为实现中的`_linger_after_streams_finish`变量。这个变量初始值为true，只在TCP连接确认不需要进入TIME-WAIT状态的时候被置为false。
+
+3. TCP连接的状态可以用四元组`(_sender.state, _receiver.state, active(), _linger_after_streams_finish)`表示，其中`actite==false && _linger_after_streams_finish==true`这种情况是不合法的，不应存在，这种情况体现在框架代码`TCPState()`的构造函数中。
+
+   ```c
+   TCPState::TCPState(const TCPSender &sender, const TCPReceiver &receiver, const bool active, const bool linger)
+       : _sender(state_summary(sender))
+       , _receiver(state_summary(receiver))
+       , _active(active)
+       , _linger_after_streams_finish(active ? linger : false) {}
+   ```
+
+4. 不能假设`end_input_stream()`一定会在输出流开启时被调用，从而断言会发送含有FIN的数据段。上层应用可能会对已经被关闭的输出流调用`end_input_stream()`。
+5. 本实验除了和之前类似的模拟测试用例以外，还引入了真实应用场景进行测试。框架提供的`txrx.sh`创建了一个tun虚拟网卡设备，为我们的TCP实现提供了socket wrapper，然后让我们的实现分别作为通信的两端互相发送消息。
+
+#### 心得
+
+本实验使我对TCP协议有了更深的理解：
+
+1. 我们熟悉的四次挥手只是主动关闭方所经历的`FIN_WAIT_1`$\rightarrow$`FIN_WAIT_2`$\rightarrow$`TIME_WAIT`这条状态转移路径。事实上，主动关闭方还存在其他的状态转移方式：
+
+   1. 发送FIN之后，对端在发送ACK之前就发来了对端的FIN，这种情况可以理解为通信双方近乎同时想要终止连接。在这种情况下，通信双方都会从`FIN_WAIT_1`进入`CLOSING`状态，收到对方的ACK之后即可进入`TIME_WAIT`状态。
+   2. 发送FIN之后，对端把ACK和对端的FIN合在一个数据段中发送。这种情况是四次挥手中的第二步和第三步被合并进行了，此时主动关闭方可以直接从`FIN_WAIT_1`进入`TIME_WAIT`状态。
+
+2. `TIME_WAIT`的存在意义：通信的一方在关闭连接前，需要确认对方已经把要发送的数据全发出去了，并且已经完全收到了自己对这段数据的ack。为了确认这件事情，需要满足两者其一：
+
+   1. 该通信方是被动关闭连接的一方，即在自己发送FIN之前，对方主动发来了FIN。此时由于己方数据还没发完，己方的ACK会和数据一起被发出去。这个长度不为0的数据段受到重传机制的保护，从而可以确保对方一定收到。这种情况下，己方不需要进入`TIME_WAIT`状态。
+   2. 该通信方已经等待了足够久，并且确信对方没有重传任何数据段过来，即`TIME_WAIT`状态。如果对方没有收到自己对FIN的ACK，一定会重传FIN。如果没有观测到这样的重传，可以确信对方已经收到了ACK。
+
+   一言蔽之，`TIME_WAIT`就是为了确保对方收到了自己的ACK，这个ACK确认己方收到了对方发来的FIN。
+
+3. TCP Keep-Alives机制。根据RFC 9293的描述，TCP实现可以发送一个探活数据段判断一个idle的连接是否仍然存活。这个探活数据段的seq是不合法的，并且恰好满足$SEG.SEQ = SND.NXT-1$。收到探活数据段的一方需要发送ACK加以回应。

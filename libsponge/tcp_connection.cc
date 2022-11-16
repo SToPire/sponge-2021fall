@@ -35,7 +35,7 @@ void TCPConnection::_send_all_outbounding_segments() {
             seg_out.header().ackno = _receiver.ackno().value();
         }
 
-        /* window size should not overflow `TCPSegement::header().win`. */
+        /* window size should not overflow `TCPSegement::header().win` */
         seg_out.header().win =
             min(_receiver.window_size(), static_cast<uint64_t>(std::numeric_limits<uint16_t>::max()));
 
