@@ -96,7 +96,7 @@ Lab4的实现主要就是调用前面实验中实现的接口：例如`segment_r
 
 2. TCP连接在TIME-WAIT下需要继续存活一段时间，体现为实现中的`_linger_after_streams_finish`变量。这个变量初始值为true，只在TCP连接确认不需要进入TIME-WAIT状态的时候被置为false。
 
-3. TCP连接的状态可以用四元组`(_sender.state, _receiver.state, active(), _linger_after_streams_finish)`表示，其中`actite==false && _linger_after_streams_finish==true`这种情况是不合法的，不应存在，这种情况体现在框架代码`TCPState()`的构造函数中。
+3. TCP连接的状态可以用四元组`(_sender.state, _receiver.state, active(), _linger_after_streams_finish)`表示，其中`active()==false && _linger_after_streams_finish==true`这种情况是不合法的，不应存在，这种情况体现在框架代码`TCPState()`的构造函数中。
 
    ```c
    TCPState::TCPState(const TCPSender &sender, const TCPReceiver &receiver, const bool active, const bool linger)
