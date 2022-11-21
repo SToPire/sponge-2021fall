@@ -38,7 +38,7 @@ void TCPSender::fill_window() {
         actual_window_size = 1;
 
     /* This could happen as we don't support partially ack a segment yet.*/
-    if (actual_window_size < _bytes_in_flight)
+    if (actual_window_size <= _bytes_in_flight)
         return;
 
     do {
@@ -72,7 +72,7 @@ void TCPSender::fill_window() {
         if (read_size or seg.header().syn or seg.header().fin) {
             _segments_out.push(seg);
 
-            _outstanding_segments.push_back(seg);
+            _outstanding_segments.push(seg);
             _timer.start(_cur_rto);
         }
     } while (!_stream.buffer_empty() && actual_window_size - _bytes_in_flight);
@@ -91,14 +91,15 @@ void TCPSender::ack_received(const WrappingInt32 ackno, const uint16_t window_si
 
     _una_seqno = ackno_abs;
 
-    for (auto seg = _outstanding_segments.begin(); seg != _outstanding_segments.end();) {
-        if (ackno_abs >= unwrap(seg->header().seqno, _isn, _next_seqno) + seg->length_in_sequence_space()) {
-            _bytes_in_flight -= seg->length_in_sequence_space();
-            seg = _outstanding_segments.erase(seg);
+    while (!_outstanding_segments.empty()) {
+        TCPSegment seg = _outstanding_segments.front();
+        if (ackno_abs >= unwrap(seg.header().seqno, _isn, _next_seqno) + seg.length_in_sequence_space()) {
+            _bytes_in_flight -= seg.length_in_sequence_space();
+            _outstanding_segments.pop();
             /* XXX: We do not support partially acknowledgement yet, which is documented in lab manual. If you do so,
-             * you may not pass "Repeated ACKs and outdated ACKs are harmless" test in send_extra.cc.*/
+             * you may not pass "Repeated ACKs and outdated ACKs are harmless" test in send_extra.cc. */
         } else {
-            ++seg;
+            break;
         }
     }
 
@@ -121,7 +122,7 @@ void TCPSender::tick(const size_t ms_since_last_tick) {
     _cur_time += ms_since_last_tick;
     _timer.tick(ms_since_last_tick);
 
-    if (_timer.expired()) {
+    if (_timer.expired() and !_outstanding_segments.empty()) {
         _segments_out.push(_outstanding_segments.front());
         /* This condition is documented in lab3 manual.*/
         if (_window_size) {

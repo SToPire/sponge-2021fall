@@ -74,7 +74,7 @@ class TCPSender {
     uint64_t _una_seqno{0};
 
     //! list of all outstanding segments
-    std::list<TCPSegment> _outstanding_segments{};
+    std::queue<TCPSegment> _outstanding_segments{};
 
     //! retransmission timer
     RetransmissionTimer _timer{};
